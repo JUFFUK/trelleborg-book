@@ -454,6 +454,7 @@
     <div class="card">
       <div class="field"><label>Your name *</label><input type="text" id="f-name" placeholder="e.g. Jane Smith"></div>
       <div class="field"><label>Company *</label><input type="text" id="f-company" placeholder="e.g. Acme Corp"></div>
+      <div class="field"><label>Your email (optional, to receive a calendar invite)</label><input type="email" id="f-email" placeholder="e.g. jane.smith@acme.com"></div>
       <div class="field">
         <label>What would you like to discuss?</label>
         <select id="f-topic">
@@ -1093,13 +1094,80 @@ function renderAvailList() {
   `).join('');
 }
 
+// ── ICS CALENDAR INVITE ─────────────────────────────────────────────────
+const DAY_DATES = {
+  'Tue 22 Sep': '20260922',
+  'Wed 23 Sep': '20260923',
+  'Thu 24 Sep': '20260924',
+  'Fri 25 Sep': '20260925'
+};
+
+function icsEscape(str) {
+  return String(str||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
+}
+
+function buildICS(booking) {
+  const dateStr = DAY_DATES[booking.day];
+  if (!dateStr) return null;
+  const [h, m] = booking.time.split(':').map(Number);
+  const startMin = h*60 + m;
+  const endMin = startMin + 30;
+  const pad = n => String(n).padStart(2,'0');
+  const dtStart = `${dateStr}T${pad(Math.floor(startMin/60))}${pad(startMin%60)}00`;
+  const dtEnd   = `${dateStr}T${pad(Math.floor(endMin/60))}${pad(endMin%60)}00`;
+  const now = new Date();
+  const dtStamp = now.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
+  const uid = `${booking.day}-${booking.time}-${booking.space}-${Date.now()}@trelleborg.one`.replace(/\s+/g,'-');
+  const summary = `Trelleborg meeting — ${booking.company || booking.name}`;
+  const description = [
+    `Visitor: ${booking.name}`,
+    `Company: ${booking.company||'—'}`,
+    `Topic: ${booking.topic||'—'}`,
+    `Attendees: ${booking.attendees||'—'}`,
+    booking.notes ? `Notes: ${booking.notes}` : ''
+  ].filter(Boolean).join('\\n');
+  const location = `${booking.space}, Trelleborg Stand, Hall 9, Stand 300, Messe Berlin`;
+
+  // Note: this calendar block uses the Europe/Berlin floating local time of the show.
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Trelleborg//InnoTrans 2026 Meeting Scheduler//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${dtStamp}`,
+    `DTSTART;TZID=Europe/Berlin:${dtStart}`,
+    `DTEND;TZID=Europe/Berlin:${dtEnd}`,
+    `SUMMARY:${icsEscape(summary)}`,
+    `DESCRIPTION:${icsEscape(description)}`,
+    `LOCATION:${icsEscape(location)}`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+}
+
+function base64Encode(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
 async function notifyHosts(booking) {
-  if (!booking.hosts || !booking.hosts.length) return;
-  const recipients = booking.hosts.map(name => {
+  const recipients = (booking.hosts||[]).map(name => {
     const m = findTeamMember(name);
     return m ? { name, email: emailFor(m) } : null;
   }).filter(Boolean);
+
+  if (booking.email) recipients.push({ name: booking.name, email: booking.email });
+
   if (!recipients.length) return;
+
+  const icsContent = buildICS(booking);
+  const attachments = icsContent ? [{
+    filename: 'trelleborg-meeting.ics',
+    content: base64Encode(icsContent)
+  }] : [];
+
   try {
     await fetch('/api/notify', {
       method: 'POST',
@@ -1109,7 +1177,8 @@ async function notifyHosts(booking) {
         booking: {
           day: booking.day, time: booking.time, space: booking.space,
           company: booking.company, topic: booking.topic, attendees: booking.attendees
-        }
+        },
+        attachments
       })
     });
   } catch(e) {
@@ -1120,6 +1189,7 @@ async function notifyHosts(booking) {
 async function bookMeeting() {
   const name     = document.getElementById('f-name').value.trim();
   const company  = document.getElementById('f-company').value.trim();
+  const email    = document.getElementById('f-email').value.trim();
   const topic    = document.getElementById('f-topic').value;
   const attendees= document.getElementById('f-attendees').value;
   const notes    = document.getElementById('f-notes').value.trim();
@@ -1143,7 +1213,7 @@ async function bookMeeting() {
     return;
   }
 
-  const booking = { name, company, day:currentDay, time:selectedSlot, space:selectedSpace,
+  const booking = { name, company, email, day:currentDay, time:selectedSlot, space:selectedSpace,
     spaceType:spaceType(selectedSpace), topic, attendees, notes, hosts:[...selectedHosts] };
   const ok = await saveToNotion(booking);
   if (!ok) { showError('Failed to save your booking. Please try again.'); return; }
@@ -1151,6 +1221,7 @@ async function bookMeeting() {
 
   bookings.push({...booking, visitorName:name});
   document.getElementById('f-name').value=''; document.getElementById('f-company').value='';
+  document.getElementById('f-email').value='';
   document.getElementById('f-topic').value=''; document.getElementById('f-attendees').value='1';
   document.getElementById('f-notes').value='';
   selectedSlot=null; selectedSpace=null; selectedHosts=[];
