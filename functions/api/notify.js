@@ -19,9 +19,10 @@ export async function onRequestPost(context) {
     });
   }
 
-  const { recipients, booking } = payload;
+  const { recipients, booking, attachments } = payload;
   // recipients: [{ name, email }, ...]
   // booking: { day, time, space, company, topic, attendees }
+  // attachments: [{ filename, content }] — content is base64-encoded
 
   if (!Array.isArray(recipients) || !recipients.length || !booking) {
     return new Response(JSON.stringify({ error: 'Missing recipients or booking details' }), {
@@ -34,7 +35,7 @@ export async function onRequestPost(context) {
   const htmlBody = `
     <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
       <h2 style="color:#1a1a1a;">New meeting booked at InnoTrans 2026</h2>
-      <p>A customer has booked a meeting slot with you on the Trelleborg stand.</p>
+      <p>A meeting has been booked on the Trelleborg stand. A calendar invite (.ics) is attached — add it to your calendar to block the time.</p>
       <table style="width:100%;border-collapse:collapse;margin:16px 0;">
         <tr><td style="padding:6px 0;color:#666;">Day</td><td style="padding:6px 0;font-weight:bold;">${booking.day}</td></tr>
         <tr><td style="padding:6px 0;color:#666;">Time</td><td style="padding:6px 0;font-weight:bold;">${booking.time}</td></tr>
@@ -51,18 +52,25 @@ export async function onRequestPost(context) {
   for (const r of recipients) {
     if (!r.email) continue;
     try {
+      const emailPayload = {
+        from: FROM_EMAIL,
+        to: [r.email],
+        subject,
+        html: htmlBody
+      };
+      if (Array.isArray(attachments) && attachments.length) {
+        emailPayload.attachments = attachments.map(a => ({
+          filename: a.filename || 'meeting.ics',
+          content: a.content
+        }));
+      }
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${RESEND_API_KEY}`
         },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: [r.email],
-          subject,
-          html: htmlBody
-        })
+        body: JSON.stringify(emailPayload)
       });
       const data = await res.json().catch(()=>({}));
       results.push({ email: r.email, ok: res.ok, status: res.status, data });
