@@ -1,5 +1,5 @@
 const ALLOWED_ORIGINS = new Set([
-  'https://meetings.trelleborg.one',
+  'https://book.trelleborg.one',
   'https://trelleborg.one'
 ]);
 
