@@ -619,14 +619,15 @@ let bookings      = [];
 let availability  = [];
 
 // ── NOTION API (via Cloudflare proxy — token lives server-side) ──────────
-function richText(str) {
-  return [{ type: 'text', text: { content: str || '' } }];
-}
+const APP_SECRET = 'X-App-Secret-4yhgjhgu77guygiuyf67ifi6';
 
 async function notionProxy(path, method, body) {
   const res = await fetch('/api/notion', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-App-Secret': APP_SECRET
+    },
     body: JSON.stringify({ path, method, body })
   });
   if (!res.ok) {
